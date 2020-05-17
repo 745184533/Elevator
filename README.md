@@ -62,3 +62,162 @@ My first Qt appiliaction
 2	设计
 2.1 数据结构设计
 总体上一个电梯类，楼道类，一个全局子线程类，一个局部子线程类。所有的显示都放在一个MainWindow主窗口类上。
+2.2 类结构成员
+电梯类包括的按钮部分：内部20个楼层按钮（作为继承自QPushbutton的Ele_in_button）,开关门按钮（继承自QPushbutton的openclose），故障按钮（继承自QPushbutton的Warning类），电梯自身按钮（继承自QPushbutton的elevatorself），一个计数器面板（QLCDNumber），一个面板集合控件（继承自QWidget）一个目标队列（保存下一个目标楼层）。
+电梯类包括的数据部分：乘坐人数、现在楼层、电梯上升或下降键.初始在第零层暂停，电梯楼层信息：内部数字键1表示有，-1表示没有请求，以及请求的发出者
+
+楼道类的按钮部分：20个外层楼道按钮（自定义控件【包含两个上升、下降按钮、一个楼层名称标签】）.
+楼道部分数据部分：20层楼的层信息（包含上下）。
+
+线程类无论全局子线程还是局部子线程都很类似。实现有一个私有成员isDone用来控制rum()函数的运行。全局线程还需要标识所选出的电梯，所以有一个整数成员 liftid. 除此之外他们都有指向电梯类，楼道类的指针方便之后共享内存。
+
+
+
+2.3 类操作设计
+1.电梯类	
+void setmode(int value) { direction = value; }//	用于调整电梯上下停状态
+    void setfloor(int value) { now_floor = value; }
+    void setswitch(int value) { liftswitch.switchs = value; }//	调整电梯门开关
+
+    void inoperation(int value);		//将乘客接入电梯,同时消除楼层按钮颜色。
+                                        //只能在mainwindow里面实现后面的细节
+
+    void Delivered(int value);	//	乘客送达修改内部按钮和人员记录。同时消除电梯内部按钮颜色。
+
+    void update_des(int flag,int value);      //更新目标楼层队列。
+
+    bool SpaceDes(){return nextDes.empty();}        //检查队列是否为空。
+
+    void gradual_vary(int value);       //	用于更改现在电梯楼层,子线程发出信号以后的调用。
+
+同时补充说明组成控件的函数和connect操作。
+     for (int i=1;i<=TotalFloor;i++) {
+         connect(&inButtons[i],&Ele_in_button::clicked,
+                 [=]()
+         {
+             inButtons[i].setParent(&Groupmy);
+             Groupmy.hide();
+             inButtons[i].setStyleSheet("background-color: rgb(175,238,238)");
+             inoperation(i);
+             //只是电梯内部请求
+             nextDes.push_back(i);//立马更新我们的目标队列。
+             //电梯内部我们是先到先服务。
+         });
+     }
+这是inButtons添加点击响应
+     //警告响应
+     connect(&warning,&Ele_in_button::clicked,
+             [=]()
+     {
+         warning.setStyleSheet("color:red");
+         setmode(ElePause);
+     });
+     //消除警告
+     connect(&warning2,&Ele_in_button::clicked,
+             [=]()
+     {
+         warning.setStyleSheet("color:black");
+     });
+
+     //实际上是控制面板显示
+     connect(&liftswitch,&Ele_in_button::clicked,
+             [=]()
+     {
+         setmode(OpenLift);
+     });
+     connect(&liftswitch2,&Ele_in_button::clicked,
+             [=]()
+     {
+         setmode(CloseLift);
+     });
+    //显示隐藏响应
+     connect(&Elevatorself,&elevatorself::clicked,
+             [=]()
+     {
+        Groupmy.show();
+     });
+     connect(&liftswitch2,&openclose::clicked,
+             [=]()
+     {
+        Groupmy.hide();
+     });
+对于每个按钮他们的构造函数里面我只去设置他们的固定大小。在这里不再显示。对于每个按钮的颜色、位置、文本这些全部写道电梯类的构造函数里面。
+2.楼道类
+void outoperation(int value, int direction);//请求发出
+void delivered(int value);	//	送达修改内外记录。
+同时位上行，下降按钮绑定事件
+for (int i=1;i<=TotalFloor;i++) {
+
+        outButton[i].id=i;
+        outButton[i].getid_dir();//设置楼层号字样
+        outButton[i].setFixedSize(250,19);  //设置总按钮的大小。
+        /*outButton[i].Lup.setStyleSheet("background-color: #f5f5f5");
+        outButton[i].Ldown.setStyleSheet("background-color: #f5f5f5");*/
+
+
+        connect(&outButton[i].Lup,&QPushButton::clicked,
+                [=]()
+        {
+
+            outoperation(i,EleUp);
+            TotalDes.push_back(i);
+        });
+        connect(&outButton[i].Ldown,&QPushButton::clicked,
+                [=]()
+        {
+
+            outoperation(i,EleDown);
+            TotalDes.push_back(i);
+        });
+}
+与电梯类类似单个按钮的大小在他们自己的构造函数里面实现。
+3.主窗口类
+private slots:
+    void dealisOver();//处理全局子线程的销毁
+    void dealvary(int floor);//处理子线程对应楼层操作。
+    void test();//测试所有类函数
+public:
+    Ui::MainWindow *ui;
+    mythread *myt;//全局线程！！
+    singleT *singlet;//局部线程。
+    int tempid=0;//标记算法选出的执行者
+    int tempfloor=0;//标记要执行操作的楼层。
+
+    QMutex printm;
+    building *Building=new building;
+    elevator *lifts=new elevator[TotalElevator + 1];
+析构函数值得注意：（要确保点击关闭按钮的时候所有的子线程随之停止）
+MainWindow::~MainWindow()
+{
+    qDebug() << "start destroy widget";
+    //调试信息确保线程安全退出。
+    //在主窗口被删除前结束子线程。
+    for (int i=1;i<=TotalElevator;++i) {
+        singlet[i].stopImmediately();
+        singlet[i].wait();
+    }
+
+    myt->stopImmediately();
+    myt->wait();
+    delete ui;
+    qDebug() << "end destroy widget";
+}
+2.4 系统流程设计
+1.所有子线程的初始化：
+
+ 
+共享内存。
+2.电梯和楼道的初始化：
+    
+3.启动线程：
+ 
+4.按钮出发后的全局线程操作：
+ 
+当有按钮按下isSelect 部分可以进入，之后选出一个电梯去将对应的请求分配。（注意这里的请求只是考虑楼道中的请求）【电梯内部请求已经绑定在了电梯内部按钮点击事件上，电梯内部采用先到先服务原则。】
+5.局部子线程运行：
+ 
+ 
+
+3运行情况
+见打包项目的运行结果。
+
